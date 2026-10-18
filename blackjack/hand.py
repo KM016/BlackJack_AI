@@ -1,4 +1,3 @@
-
 class Hand:
     def __init__(self, cards=None, from_split=False):
         # store the cards in the hand
