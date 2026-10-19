@@ -1,7 +1,26 @@
+# Local environments, Python bytecode and test/tool caches
 .venv/
+venv/
 __pycache__/
-*.pyc
+*.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+
+# Local generated experiments and complete external research archives
+/outputs/
+/research-archive*/
+/*backup*/
+*.tar
+*.tar.gz
+*.zip
+
+# Temporary files and Finder metadata
+/.dist/
 .DS_Store
-outputs/
-results/
+*.tmp
+
+# models/ and compact results/ are intentional publication evidence.

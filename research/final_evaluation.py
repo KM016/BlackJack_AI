@@ -1,0 +1,413 @@
+"""Evaluate six planned blackjack strategies plus one exploratory DQN."""
+
+import argparse
+import csv
+import hashlib
+import json
+import math
+import statistics
+from decimal import Decimal
+from pathlib import Path
+
+import torch
+
+from blackjack.engine import BlackjackEngine
+from blackjack.player import Player
+from research.verification import MODEL_FOLDERS, resolve_model_folder
+from research.calibration_model import CalibrationModel
+from research.study_plan import load_plan, plan_hash
+from rl.dqn import choose_action
+from rl.environment import BlackjackBettingEnv
+from rl.policy import load_policy
+from strategies.basic import BasicStrategy
+from strategies.calibrated_kelly import CalibratedKellyBetting
+from strategies.flat import FlatBetting
+from strategies.hi_lo import HiLoBetting, HiLoCounter
+from strategies.model_based_log import ModelBasedLogBetting
+from strategies.runner import run_round
+from strategies.wager_grid import DiscreteBetting, legal_wager_mask
+
+
+# retain the original six-policy study and add one separately labelled DQN
+# the original winner remains the primary DQN throughout final evaluation
+STRATEGIES = (
+    "flat", "hi_lo", "calibrated_kelly", "model_based_log",
+    "dqn", "dqn_runner_up", "never_bet",
+)
+PRIMARY_DQN = "extended_3"
+SECONDARY_DQN = "original_1"
+SMOKE_SEEDS = (290001, 290002, 290003)
+INITIAL_BANKROLL = Decimal("1000")
+ROUNDS = 500
+REFERENCE_BANKROLL = Decimal("1000000000")
+FINAL_CONFIRMATION = "I_UNDERSTAND_FINAL_HOLDOUT"
+
+ROUND_COLUMNS = (
+    "strategy", "seed", "opportunity", "round_status", "true_count", "action_index",
+    "wager", "bankroll_before", "bankroll_after", "net_profit", "round_return", "log_reward",
+)
+
+
+# identify frozen settings and model files without modifying them
+def file_hash(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+# refuse a changed winner, research plan or saved DQN before any final simulation
+def check_frozen_inputs(plan_path, selected_path, calibration_path):
+    plan_path = Path(plan_path)
+    selected_path = Path(selected_path)
+    calibration_path = Path(calibration_path)
+    plan = load_plan(plan_path)
+    selected = json.loads(selected_path.read_text())
+
+    if len(plan["seeds"]["selection"]) != 30 or len(plan["seeds"]["evaluation"]) != 300:
+        raise ValueError("Expected 30 selection seeds and 300 final evaluation seeds")
+    if selected.get("selection_seeds") != plan["seeds"]["selection"]:
+        raise ValueError("Selection seed allocation has changed")
+    if selected.get("research_plan_sha256") != plan_hash(plan):
+        raise ValueError("Selection used a different research plan")
+    if selected.get("research_plan_file_sha256") != file_hash(plan_path):
+        raise ValueError("Research plan file has changed since selection")
+    if selected.get("final_evaluation_seeds_used") is not False:
+        raise ValueError("Final holdout must not have been used for selection")
+    if selected.get("selected_candidate") != PRIMARY_DQN:
+        raise ValueError("Winner differs from the verified frozen selection")
+    if selected.get("candidates") != [
+        "original_1", "original_2", "original_3", "extended_1", "extended_2", "extended_3"
+    ]:
+        raise ValueError("Selection candidates have changed")
+
+    # the selected model must match the original selection decision by content hash
+    historical_path = selected["selected_policy_folder"]
+    expected = selected["model_files"][selected["selected_candidate"]]
+    if historical_path != expected["folder"] or historical_path != "outputs/dqn_extended/train_3":
+        raise ValueError("Selected model path does not match the frozen decision")
+    path = resolve_model_folder(historical_path)
+    for filename, key in (("policy.pt", "policy_sha256"), ("settings.json", "settings_sha256")):
+        if file_hash(path / filename) != expected[key]:
+            raise ValueError(f"Selected {filename} differs from the frozen model")
+
+    # prevent accidentally passing a selected model trained on final or selection data
+    settings = json.loads((path / "settings.json").read_text())
+    if (settings.get("seeds") != plan["seeds"]["train_3"] or
+            settings.get("network_seed") != 303 or
+            settings.get("environment_steps") != 250000 or
+            settings.get("rounds") != 500 or
+            settings.get("initial_bankroll") != "1000" or
+            settings.get("unit") != "1" or
+            settings.get("epsilon_decay_steps") != 10000 or
+            float(settings.get("reward_scale", 1.0)) != 1.0):
+        raise ValueError("Frozen primary model's training configuration differs from the study")
+
+    # the runner-up is fixed by the already-completed selection experiment
+    # never edit selected.json or replace the primary model after seeing smoke results
+    runner_info = selected["model_files"].get(SECONDARY_DQN)
+    if not isinstance(runner_info, dict):
+        raise ValueError("Selection record does not contain the frozen runner-up")
+    if runner_info["folder"] != "outputs/dqn/train_1":
+        raise ValueError("Runner-up location differs from the verified selection")
+    runner_path = resolve_model_folder(runner_info["folder"])
+    for filename, key in (("policy.pt", "policy_sha256"), ("settings.json", "settings_sha256")):
+        if file_hash(runner_path / filename) != runner_info[key]:
+            raise ValueError(f"Runner-up {filename} differs from the selection record")
+    runner_settings = json.loads((runner_path / "settings.json").read_text())
+    if (runner_settings.get("seeds") != plan["seeds"]["train_1"][:100] or
+            runner_settings.get("network_seed") != 101 or
+            runner_settings.get("environment_steps") != 50000 or
+            runner_settings.get("rounds") != 500 or
+            runner_settings.get("initial_bankroll") != "1000" or
+            runner_settings.get("unit") != "1" or
+            runner_settings.get("epsilon_decay_steps") != 10000 or
+            float(runner_settings.get("reward_scale", 1.0)) != 1.0):
+        raise ValueError("Frozen runner-up's training configuration differs from the study")
+
+    model = CalibrationModel.load(calibration_path)
+    document = model.get_document()
+    if (document.get("role") != "calibration" or
+            document.get("population") != "two_seats_fixed_one_unit_s17_das" or
+            document.get("metadata", {}).get("rules", {}).get("decks") != 6):
+        raise ValueError("Calibration model does not match the research population")
+    # the two calibrated strategies should both accept this frozen model
+    CalibratedKellyBetting(model)
+    ModelBasedLogBetting(model)
+
+    return plan, selected, path, runner_path, model
+
+
+# return a fresh policy and a fresh card counter for every independent session
+def make_classic_policy(name, model):
+    if name == "flat":
+        return DiscreteBetting(FlatBetting("1"))
+    if name == "hi_lo":
+        return DiscreteBetting(HiLoBetting(base_unit="1"))
+    if name == "calibrated_kelly":
+        return DiscreteBetting(CalibratedKellyBetting(model))
+    if name == "model_based_log":
+        return DiscreteBetting(ModelBasedLogBetting(model))
+    if name == "never_bet":
+        return DiscreteBetting()
+    raise ValueError(f"Unknown classical strategy {name}")
+
+
+# record the outcome of one opportunity, including explicit no-bet records
+def record_round(name, seed, number, status, count, action, wager, before, after):
+    profit = after - before
+    if before <= 0 or after <= 0:
+        raise ArithmeticError("Bankroll must remain strictly positive")
+    if wager is None:
+        if profit != 0:
+            raise ArithmeticError("Sitting out cannot change bankroll")
+        reward = 0.0
+        round_return = ""
+    else:
+        reward = math.log1p(float(profit / before))
+        round_return = str(profit / wager) if status == "complete" else ""
+    if status in ("void", "absorbed") and profit != 0:
+        raise ArithmeticError("Voided or absorbed opportunities must have zero profit")
+    return {
+        "strategy": name, "seed": seed, "opportunity": number, "round_status": status,
+        "true_count": "" if count is None else str(count),
+        "action_index": action, "wager": "" if wager is None else str(wager),
+        "bankroll_before": str(before), "bankroll_after": str(after),
+        "net_profit": str(profit), "round_return": round_return, "log_reward": reward,
+    }
+
+
+# duplicate the selected model's exact public-state inference environment
+def play_dqn(seed, network, name="dqn"):
+    # evaluate both neural networks through the same public-state environment
+    env = BlackjackBettingEnv(initial_bankroll="1000", rounds=ROUNDS, unit="1")
+    state = env.reset(seed)
+    rows = []
+    while not env.done:
+        number = env.steps + 1
+        count = env.counter.get_betting_true_count(env._engine.betting_observation("agent"))
+        action = choose_action(network, state, epsilon=0.0)
+        state, reward, _, info = env.step(action)
+        row = record_round(
+            name, seed, number, info["round_status"], count, action,
+            info["wager"], info["bankroll_before"], info["bankroll_after"],
+        )
+        if not math.isclose(float(row["log_reward"]), reward, abs_tol=1e-12):
+            raise ArithmeticError("DQN evaluation reward differs from training environment")
+        rows.append(row)
+    if env.terminal_reason not in ("horizon", "no_positive_wager"):
+        raise RuntimeError("Unrecognised DQN terminal state")
+    final = env._engine.players["agent"].bankroll
+    return complete_session(rows, name, seed, final, env.terminal_reason)
+
+
+# play through the existing blackjack engine, including the independent reference seat
+def play_classic(name, seed, model):
+    engine = BlackjackEngine({
+        "reference": Player(REFERENCE_BANKROLL),
+        "agent": Player(INITIAL_BANKROLL),
+    }, seed=seed, retain_history=False)
+    policies = {
+        "reference": FlatBetting("1"),
+        "agent": make_classic_policy(name, model),
+    }
+    playing = {"reference": BasicStrategy(), "agent": BasicStrategy()}
+    public_counter = HiLoCounter(num_decks=6)
+    rows = []
+    terminal_reason = "horizon"
+    for number in range(1, ROUNDS + 1):
+        view = engine.betting_observation("agent")
+        mask = legal_wager_mask(view)
+        if not any(mask[1:]):
+            terminal_reason = "no_positive_wager"
+            break
+        count = public_counter.get_betting_true_count(view)
+        before = engine.players["agent"].bankroll
+        result = run_round(engine, playing, policies)
+        if result["status"] not in ("complete", "void"):
+            raise RuntimeError("The reference seat must keep the game running")
+        after = engine.players["agent"].bankroll
+        wager = result["wagers"].get("agent")
+        action = policies["agent"].last_action
+        rows.append(record_round(name, seed, number, result["status"], count, action, wager, before, after))
+    final = engine.players["agent"].bankroll
+    return complete_session(rows, name, seed, final, terminal_reason)
+
+
+# preserve a fixed 500-opportunity horizon after functional inability to wager
+def complete_session(rows, name, seed, final, terminal_reason):
+    if not rows:
+        raise RuntimeError("No blackjack opportunity was evaluated")
+    if terminal_reason == "horizon" and len(rows) != ROUNDS:
+        raise RuntimeError("Horizon ended unexpectedly")
+    for number in range(len(rows) + 1, ROUNDS + 1):
+        rows.append(record_round(name, seed, number, "absorbed", None, 0, None, final, final))
+    summary = summarize_session(rows, name, seed, terminal_reason)
+    if not math.isclose(summary["final_bankroll"], float(final), abs_tol=1e-10):
+        raise ArithmeticError("Session terminal bankroll does not match round data")
+    return summary, rows
+
+
+# calculate risk and performance using the independent session as the unit
+def summarize_session(rows, name, seed, terminal_reason):
+    if len(rows) != ROUNDS:
+        raise ValueError("One session must contain exactly 500 opportunities")
+    peak = float(INITIAL_BANKROLL)
+    drawdown = 0.0
+    ratios = []
+    for row in rows:
+        before = float(row["bankroll_before"])
+        after = float(row["bankroll_after"])
+        ratios.append((after - before) / before)
+        peak = max(peak, after)
+        drawdown = max(drawdown, 1.0 - after / peak)
+    final = float(rows[-1]["bankroll_after"])
+    log_growth = math.fsum(float(row["log_reward"]) for row in rows)
+    if not math.isclose(log_growth, math.log(final / float(INITIAL_BANKROLL)), abs_tol=1e-12):
+        raise ArithmeticError("Summed rewards do not reconcile to final wealth")
+    bets = [row for row in rows if row["wager"]]
+    return {
+        "strategy": name, "seed": seed, "rounds": len(rows),
+        "final_bankroll": final, "net_profit": final - float(INITIAL_BANKROLL),
+        "log_growth": log_growth, "max_drawdown": drawdown,
+        "return_std": statistics.stdev(ratios), "bets": len(bets),
+        "sits": len(rows) - len(bets),
+        "mean_bet": statistics.mean(float(row["wager"]) for row in bets) if bets else 0.0,
+        "void_rounds": sum(row["round_status"] == "void" for row in rows),
+        "absorbed_rounds": sum(row["round_status"] == "absorbed" for row in rows),
+        "terminal_reason": terminal_reason,
+    }
+
+
+# avoid treating correlated rounds as independent when summarising policies
+def summarize_policy(rows, name):
+    return {
+        "strategy": name, "sessions": len(rows),
+        "mean_log_growth": statistics.mean(x["log_growth"] for x in rows),
+        "mean_final_bankroll": statistics.mean(x["final_bankroll"] for x in rows),
+        "mean_net_profit": statistics.mean(x["net_profit"] for x in rows),
+        "mean_max_drawdown": statistics.mean(x["max_drawdown"] for x in rows),
+        "betting_rate": sum(x["bets"] for x in rows) / sum(x["rounds"] for x in rows),
+        "functional_ruin_sessions": sum(x["terminal_reason"] == "no_positive_wager" for x in rows),
+    }
+
+
+# create new outputs only; do not overwrite old experiments or modify trained models
+def write_csv(path, rows):
+    with Path(path).open("x", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def evaluate(plan_path, selected_path, calibration_path, output, mode="smoke", confirmation=None):
+    if mode not in ("smoke", "final"):
+        raise ValueError("Mode must be smoke or final")
+    if mode == "final" and confirmation != FINAL_CONFIRMATION:
+        raise ValueError("Final holdout requires explicit confirmation")
+    plan, selection, dqn_path, runner_path, calibration = check_frozen_inputs(
+        plan_path, selected_path, calibration_path
+    )
+    if mode == "final":
+        # the real fitted calibration must trace back to the unchanged original plan
+        # smoke mode may use a synthetic fixture, but final mode must never do so
+        original_plan = load_plan("research/study_plan.json")
+        document = calibration.get_document()
+        metadata = document.get("metadata", {})
+        if (document.get("plan_hash") != plan_hash(original_plan) or
+                metadata.get("plan_hash") != plan_hash(original_plan) or
+                metadata.get("seeds") != original_plan["seeds"]["calibration"] or
+                document.get("settings") != original_plan["calibration"]):
+            raise ValueError("Calibration model is not linked to the original approved study")
+        seeds = plan["seeds"]["evaluation"]
+    else:
+        seeds = SMOKE_SEEDS
+        reserved = {x for group in plan["seeds"].values() for x in group}
+        if reserved.intersection(seeds):
+            raise ValueError("Smoke seeds overlap a reserved research seed")
+    output = Path(output)
+    if output.exists():
+        raise FileExistsError("The evaluation output exists; never overwrite a study")
+    if len(seeds) != len(set(seeds)):
+        raise ValueError("Evaluation seeds must be distinct")
+
+    # load the frozen network after verifying hashes; no optimizer is ever created
+    torch.set_num_threads(1)
+    policy = load_policy(dqn_path)
+    network = policy.network.eval()
+    runner_network = load_policy(runner_path).network.eval()
+    manifest = {
+        "status": "incomplete", "mode": mode, "strategies": list(STRATEGIES),
+        "seeds": list(seeds), "rounds_per_session": ROUNDS,
+        "selected_candidate": selection["selected_candidate"],
+        "selected_policy_folder": MODEL_FOLDERS[selection["selected_policy_folder"]],
+        "selected_policy_sha256": file_hash(dqn_path / "policy.pt"),
+        "selected_settings_sha256": file_hash(dqn_path / "settings.json"),
+        "exploratory_candidate": SECONDARY_DQN,
+        "exploratory_policy_folder": MODEL_FOLDERS[selection["model_files"][SECONDARY_DQN]["folder"]],
+        "exploratory_policy_sha256": file_hash(runner_path / "policy.pt"),
+        "exploratory_settings_sha256": file_hash(runner_path / "settings.json"),
+        "selection_sha256": file_hash(selected_path),
+        "plan_sha256": file_hash(plan_path),
+        "calibration_sha256": file_hash(calibration_path),
+        "evaluation_source_sha256": file_hash(__file__),
+        "primary_contrast": "dqn_minus_model_based_log_paired_mean_session_log_growth",
+        "exploratory_comparison": "dqn_runner_up vs dqn and traditional benchmarks",
+        "amendment": (
+            "Original DQN 1 was added after examining three non-final smoke sessions. "
+            "Its comparisons are exploratory, not part of the original confirmatory hypothesis. "
+            "Extended DQN 3 remains the formally selected primary model."
+        ),
+        "note": "Shared seeds pair sessions, not identical card paths; results use betting units",
+    }
+    output.mkdir(parents=True)
+    (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+
+    sessions = []
+    policy_summaries = []
+    # stream detailed rounds to CSV without keeping 1,050,000 rows in memory
+    with (output / "rounds.csv").open("x", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=ROUND_COLUMNS)
+        writer.writeheader()
+        for name in STRATEGIES:
+            policy_rows = []
+            for index, seed in enumerate(seeds, start=1):
+                if name == "dqn":
+                    summary, detailed = play_dqn(seed, network)
+                elif name == "dqn_runner_up":
+                    summary, detailed = play_dqn(seed, runner_network, name="dqn_runner_up")
+                else:
+                    summary, detailed = play_classic(name, seed, calibration)
+                writer.writerows(detailed)
+                sessions.append(summary)
+                policy_rows.append(summary)
+                if index % 10 == 0 or index == len(seeds):
+                    print(f"{name}: {index}/{len(seeds)} sessions complete", flush=True)
+            result = summarize_policy(policy_rows, name)
+            policy_summaries.append(result)
+            print(f"{name}: mean session log growth {result['mean_log_growth']:+.6f}", flush=True)
+
+    write_csv(output / "sessions.csv", sessions)
+    write_csv(output / "summary.csv", policy_summaries)
+    manifest["status"] = "complete"
+    manifest["session_count"] = len(sessions)
+    manifest["opportunity_count"] = len(sessions) * ROUNDS
+    manifest["result_sha256"] = {
+        filename: file_hash(output / filename)
+        for filename in ("rounds.csv", "sessions.csv", "summary.csv")
+    }
+    (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    return manifest
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--plan", default="research/study_plan_dqn_extended.json")
+    parser.add_argument("--selection", default="models/selection.json")
+    parser.add_argument("--calibration", default="models/calibration_model.json")
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--mode", choices=("smoke", "final"), default="smoke")
+    parser.add_argument("--confirm-final", default=None)
+    args = parser.parse_args()
+    evaluate(args.plan, args.selection, args.calibration, args.output, args.mode, args.confirm_final)
+
+
+if __name__ == "__main__":
+    main()

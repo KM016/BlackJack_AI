@@ -1,0 +1,144 @@
+{
+  "version": "calibration_validation_v1",
+  "plan_hash": "e55f57f6e365727881e1a39173284c534ba051d95c455bfa2036407e107acc43",
+  "calibration_seed_count": 120,
+  "validation_seed_count": 40,
+  "validation_complete_rounds": 200000,
+  "validation_void_rounds": 0,
+  "comparisons": [
+    {
+      "bin": "[-inf, -2)",
+      "calibration_count": 91865,
+      "validation_count": 30043,
+      "calibration_mean": "-0.01475534752081859249986393077",
+      "validation_mean": "-0.02208501148354025896215424558",
+      "calibration_variance": "1.379139261587080144538303372",
+      "validation_variance": "1.402905818350331903274702972",
+      "validation_mean_ci": [
+        "-0.03666550709343357297407251981",
+        "-0.007001807740596794941457407223"
+      ],
+      "calibration_mean_inside_validation_ci": true,
+      "calibration_supported": true,
+      "validation_supported": true
+    },
+    {
+      "bin": "[-2, -1)",
+      "calibration_count": 73622,
+      "validation_count": 24515,
+      "calibration_mean": "-0.007450218684632310993996359784",
+      "validation_mean": "-0.005221293085865796451152355701",
+      "calibration_variance": "1.353243823841722866810010870",
+      "validation_variance": "1.364723491657216658972598319",
+      "validation_mean_ci": [
+        "-0.02066983925258836368899180087",
+        "0.01101350828090668339132099523"
+      ],
+      "calibration_mean_inside_validation_ci": true,
+      "calibration_supported": true,
+      "validation_supported": true
+    },
+    {
+      "bin": "[-1, 0)",
+      "calibration_count": 111209,
+      "validation_count": 37104,
+      "calibration_mean": "-0.001996241311404652501146489942",
+      "validation_mean": "-0.002236955584303579128934885727",
+      "calibration_variance": "1.339085828667261961074245543",
+      "validation_variance": "1.341854144750734517503497384",
+      "validation_mean_ci": [
+        "-0.01517832067581927283549481622",
+        "0.01081978970827669099768810934"
+      ],
+      "calibration_mean_inside_validation_ci": true,
+      "calibration_supported": true,
+      "validation_supported": true
+    },
+    {
+      "bin": "[0, 1)",
+      "calibration_count": 164641,
+      "validation_count": 54418,
+      "calibration_mean": "-0.005694207396699485547342399524",
+      "validation_mean": "0.0002756440883531184534529016134",
+      "calibration_variance": "1.326369118565145737562569546",
+      "validation_variance": "1.339351597209303612900807919",
+      "validation_mean_ci": [
+        "-0.008484934749856249381490227572",
+        "0.008724269475722686825770318702"
+      ],
+      "calibration_mean_inside_validation_ci": true,
+      "calibration_supported": true,
+      "validation_supported": true
+    },
+    {
+      "bin": "[1, 2)",
+      "calibration_count": 69882,
+      "validation_count": 23900,
+      "calibration_mean": "-0.0006296328095933144443490455339",
+      "validation_mean": "0.01887029288702928870292887029",
+      "calibration_variance": "1.312995983116388974029627001",
+      "validation_variance": "1.328423343985436620393948843",
+      "validation_mean_ci": [
+        "0.006247505513168951715982379283",
+        "0.03221918266783755856079537701"
+      ],
+      "calibration_mean_inside_validation_ci": false,
+      "calibration_supported": true,
+      "validation_supported": true
+    },
+    {
+      "bin": "[2, 3)",
+      "calibration_count": 38798,
+      "validation_count": 13195,
+      "calibration_mean": "0.007848342698077220475282231043",
+      "validation_mean": "0.02258431223948465327775672603",
+      "calibration_variance": "1.298331318907349420995576200",
+      "validation_variance": "1.272947542439944942649933876",
+      "validation_mean_ci": [
+        "0.004425395665436831757504492868",
+        "0.04019866850144266837197522421"
+      ],
+      "calibration_mean_inside_validation_ci": true,
+      "calibration_supported": true,
+      "validation_supported": true
+    },
+    {
+      "bin": "[3, 4)",
+      "calibration_count": 21989,
+      "validation_count": 7411,
+      "calibration_mean": "0.01607621992814589112738187275",
+      "validation_mean": "0.02536769666711644852246660370",
+      "calibration_variance": "1.282725443708177206998658292",
+      "validation_variance": "1.266967729153384899821562317",
+      "validation_mean_ci": [
+        "-0.003619655010202099466284714803",
+        "0.05273230308226181673589601052"
+      ],
+      "calibration_mean_inside_validation_ci": true,
+      "calibration_supported": true,
+      "validation_supported": true
+    },
+    {
+      "bin": "[4, inf)",
+      "calibration_count": 27994,
+      "validation_count": 9414,
+      "calibration_mean": "0.01871829677788097449453454312",
+      "validation_mean": "0.02560016995963458678563841088",
+      "calibration_variance": "1.265912607169234821897074494",
+      "validation_variance": "1.263819224374771918047876543",
+      "validation_mean_ci": [
+        "0.003149753322198782639455294386",
+        "0.04799333926416199842934334327"
+      ],
+      "calibration_mean_inside_validation_ci": true,
+      "calibration_supported": true,
+      "validation_supported": true
+    }
+  ],
+  "limitations": [
+    "Pointwise 95% confidence intervals are not simultaneous guarantees.",
+    "Calibration and validation sessions are separate; rounds within a session are dependent.",
+    "True-count bins omit exact shoe composition and other sources of state variation.",
+    "This validation is not a profitability evaluation of a Kelly strategy."
+  ]
+}

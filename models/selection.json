@@ -1,0 +1,89 @@
+{
+  "selected_candidate": "extended_3",
+  "selected_policy_folder": "outputs/dqn_extended/train_3",
+  "selection_method": "highest mean session log growth; ties within 1e-12: smaller mean maximum drawdown, then candidate order",
+  "selection_seeds": [
+    260001,
+    260002,
+    260003,
+    260004,
+    260005,
+    260006,
+    260007,
+    260008,
+    260009,
+    260010,
+    260011,
+    260012,
+    260013,
+    260014,
+    260015,
+    260016,
+    260017,
+    260018,
+    260019,
+    260020,
+    260021,
+    260022,
+    260023,
+    260024,
+    260025,
+    260026,
+    260027,
+    260028,
+    260029,
+    260030
+  ],
+  "research_plan_sha256": "33aae233733cf2615f76976a48a1d9aad8455d3c550fd0bf8b42f1b664e65d59",
+  "research_plan_file_sha256": "642849c33ec096af519a248d6aac3b2d7b5a99681d3c50acd5242abe696d25e8",
+  "candidates": [
+    "original_1",
+    "original_2",
+    "original_3",
+    "extended_1",
+    "extended_2",
+    "extended_3"
+  ],
+  "model_files": {
+    "original_1": {
+      "folder": "outputs/dqn/train_1",
+      "policy_sha256": "fca67f2c607fe36961f73dba9210cdfd2b80b04535eca1873defcfafdf20f840",
+      "settings_sha256": "7fa6c3ec53c47cc01e016711cf97f4ad77fee821752330ff098a1d9901d1af55"
+    },
+    "original_2": {
+      "folder": "outputs/dqn/train_2",
+      "policy_sha256": "a422542c6591f10610abf4c42f81386dea30c2706c86b99df12e0ea6a231b08f",
+      "settings_sha256": "77716b4e8b568fdbb7254b8cacc68be62826940b2131687ed67dcea62610ae7d"
+    },
+    "original_3": {
+      "folder": "outputs/dqn/train_3",
+      "policy_sha256": "48d3933c480bde634155505b359aedaa28f0cfd480e80e32fe37d45ed33c2db9",
+      "settings_sha256": "7bc7a155241283201fc695f4a7d8532b1f760d43cb09c772d69d55f6b194220f"
+    },
+    "extended_1": {
+      "folder": "outputs/dqn_extended/train_1",
+      "policy_sha256": "72d0767fedb64ca9784fd71a86327e5e1ccd063bf3ada4f3f258b66b820f819e",
+      "settings_sha256": "ebd2aaf6cd812b02de67148385e5248dbb169ae00464ffce39a6d88dc57c6ad5"
+    },
+    "extended_2": {
+      "folder": "outputs/dqn_extended/train_2",
+      "policy_sha256": "fd3a6b00f7c62221e765de77991289a8500393eee969911cf24ccb3b3f83aded",
+      "settings_sha256": "3d847f4f603c6bf2b1e7f3f62c0e8b8625395a4cc7595af838cbdc0211077598"
+    },
+    "extended_3": {
+      "folder": "outputs/dqn_extended/train_3",
+      "policy_sha256": "e8e099843ad6db94e67b7e2d0c200029efd22ddd21d103bf1f7593a579d3d982",
+      "settings_sha256": "712ed2fd60fe92d2d9f964784c1de89b8d5f3de5423c28879c737ac20f59fc92"
+    }
+  },
+  "winner_summary": {
+    "candidate": "extended_3",
+    "sessions": 30,
+    "mean_log_growth": 0.02583151790266379,
+    "mean_final_bankroll": 1035.8,
+    "mean_net_profit": 35.8,
+    "mean_max_drawdown": 0.1403798636704003,
+    "betting_rate": 1.0
+  },
+  "final_evaluation_seeds_used": false
+}

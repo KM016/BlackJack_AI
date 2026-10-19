@@ -1,0 +1,86 @@
+{
+  "schema_version": "blackjack_publication_v1",
+  "description": "Derived asset mapping; original experiment metadata and selection record are unchanged. Historical paths retain their original identities.",
+  "origin": {
+    "repository": "KM016/BlackJack_AI",
+    "branch": "temp",
+    "commit": "168638e61cf447dc7d39fe4d76f074d6270569a1"
+  },
+  "inputs": {
+    "models/dqn_primary/policy.pt": "e8e099843ad6db94e67b7e2d0c200029efd22ddd21d103bf1f7593a579d3d982",
+    "models/dqn_primary/settings.json": "712ed2fd60fe92d2d9f964784c1de89b8d5f3de5423c28879c737ac20f59fc92",
+    "models/dqn_exploratory/policy.pt": "fca67f2c607fe36961f73dba9210cdfd2b80b04535eca1873defcfafdf20f840",
+    "models/dqn_exploratory/settings.json": "7fa6c3ec53c47cc01e016711cf97f4ad77fee821752330ff098a1d9901d1af55",
+    "models/calibration_model.json": "2173961c97cfbb3d9f2ea5da5ed8fbab9c3e7527adc9e8ce6536116b91fb0e58",
+    "models/selection.json": "ee2113e5318ddad6e7196cbd651c341a9ec56f4cc1c1eaab8151086ee7b27b5e",
+    "results/experiment_metadata.json": "2c003f7fe316029808f6fbc0e966d77e34659e1b0fe8c3891d3474d27bfbd3b5",
+    "results/sessions.csv": "ab6dc4cb11c352a810282a8d98ad3fd2142f1f5c2534151821e6ff83d49b5b3f",
+    "results/summary.csv": "e1e862794cb30b1be07343221244fff876425f86b076ff78ac8a2576f1e6a9b3",
+    "research/evidence/calibration_metadata.json": "4d5e469fe4d282015a04cae183b0e5322b598fa23e4518fd2057838a7ae44b70",
+    "research/evidence/calibration_validation_metadata.json": "287e1badd3c661fbca63ed4f0409413390cb0d9c0f65d088927e7fd3db1fb2dc",
+    "research/evidence/calibration_validation_report.json": "9caee4e7455b67b3ac467df2be5198d6d5e0d85d6d56bcf0886275f807a1c73a",
+    "research/evidence/selection_summary.csv": "3d8c06a6587c4024b4f12b55e6d4da977034df2e6a1727c2337e9f7156de7c60",
+    "research/evidence/final_evaluation_source.py.txt": "dc899160fdd1da27c9203c7d0037b151e25429033b097fbcd4e93b8d6ea9d82e",
+    "research/study_plan.json": "13d31f54db0e81d8a3474b234dc2851aaea1974ace608746c5e182409090d336",
+    "research/study_plan_dqn_extended.json": "642849c33ec096af519a248d6aac3b2d7b5a99681d3c50acd5242abe696d25e8"
+  },
+  "historical_paths": {
+    "outputs/dqn_extended/train_3/policy.pt": "models/dqn_primary/policy.pt",
+    "outputs/dqn_extended/train_3/settings.json": "models/dqn_primary/settings.json",
+    "outputs/dqn/train_1/policy.pt": "models/dqn_exploratory/policy.pt",
+    "outputs/dqn/train_1/settings.json": "models/dqn_exploratory/settings.json",
+    "outputs/calibration_model.json": "models/calibration_model.json",
+    "outputs/dqn_selection/selected.json": "models/selection.json",
+    "outputs/final_evaluation_7/manifest.json": "results/experiment_metadata.json",
+    "outputs/final_evaluation_7/sessions.csv": "results/sessions.csv",
+    "outputs/final_evaluation_7/summary.csv": "results/summary.csv",
+    "outputs/calibration/calibration_metadata.json": "research/evidence/calibration_metadata.json",
+    "outputs/calibration_validation/calibration_validation_metadata.json": "research/evidence/calibration_validation_metadata.json",
+    "outputs/calibration_validation_report.json": "research/evidence/calibration_validation_report.json",
+    "outputs/dqn_selection/summary.csv": "research/evidence/selection_summary.csv"
+  },
+  "model_folder_mapping": {
+    "outputs/dqn_extended/train_3": "models/dqn_primary",
+    "outputs/dqn/train_1": "models/dqn_exploratory"
+  },
+  "archived_raw_inputs": {
+    "outputs/calibration/calibration_samples.csv": {
+      "sha256": "570dcb066f63c22729d7a3644eccb45ae04181197be50413125938c181cedee1",
+      "bytes": 68984763,
+      "archive_member": "BlackJackAI/outputs/calibration/calibration_samples.csv"
+    },
+    "outputs/calibration_validation/calibration_validation_samples.csv": {
+      "sha256": "f9b416fc5ee7680f9fb618fffa05a9ce25688448f1844b431cb18f512fca1683",
+      "bytes": 27384231,
+      "archive_member": "BlackJackAI/outputs/calibration_validation/calibration_validation_samples.csv"
+    },
+    "outputs/final_evaluation_7/rounds.csv": {
+      "sha256": "8d05632e5b98a56e6570b3fd5215fbdd1d784488aa405288a3d20fe3a1c0e808",
+      "bytes": 97509967,
+      "archive_member": "BlackJackAI/outputs/final_evaluation_7/rounds.csv"
+    }
+  },
+  "archive": {
+    "filename": "BlackJackAI-original.tar",
+    "sha256": "c56b5244733392fb5ce8aaf531710684cf8482d13a62520f779de625d3dcfbf9",
+    "inventory_sha256": "8ec1ee1b1c07df1f7485a9a305bf2cb11db0bcbb3c7c13dfa1044b22d3d7d2aa",
+    "limitation": "Same-disk local archive outside working repository; not durable off-device backup."
+  },
+  "study": {
+    "confirmatory_policies": [
+      "flat",
+      "hi_lo",
+      "calibrated_kelly",
+      "model_based_log",
+      "dqn",
+      "never_bet"
+    ],
+    "exploratory_policy": "dqn_runner_up",
+    "primary_model": "extended_3",
+    "exploratory_model": "original_1",
+    "primary_comparison": [
+      "dqn",
+      "model_based_log"
+    ]
+  }
+}
