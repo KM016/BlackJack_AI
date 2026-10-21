@@ -1,4 +1,4 @@
-# BlackJackAI
+# Blackjack Bankroll Reinforcement Learning and Risk Analysis
 
 ## 1. Introduction
 
