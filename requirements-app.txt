@@ -1,0 +1,3 @@
+# Additional dependency for the interactive blackjack application.
+# Install the project's normal requirements first.
+streamlit>=1.50,<2
