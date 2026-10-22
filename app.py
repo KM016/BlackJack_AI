@@ -1,284 +1,432 @@
-"""Play blackjack alongside the saved DQN and watch the results live.
+"""Play blackjack against the saved DQNs and traditional betting strategies.
 
-Run from the project root with: streamlit run app.py
+Run from the BlackJackAI project root with: streamlit run app.py
 """
+
+from decimal import Decimal
+from html import escape
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import streamlit as st
 
-from app.game import BlackjackMatch, MAX_ROUNDS, MODEL_PATHS
+from blackjack.engine import BlackjackEngine, ShoeExhausted
+from blackjack.player import Player
+from blackjack.rules import Rules
+from rl.policy import load_policy
+from strategies.calibrated_kelly import CalibratedKellyBetting
+from strategies.flat import FlatBetting
+from strategies.hi_lo import HiLoBetting
+from strategies.model_based_log import ModelBasedLogBetting
+from strategies.wager_grid import DiscreteBetting
+from strategies.basic import BasicStrategy
+from strategies.wager_grid import WAGERS, legal_wager_mask
 
 
-st.set_page_config(page_title="Blackjack | You vs DQN", page_icon="♠️", layout="wide")
+ROOT = Path(__file__).resolve().parent
+START_BALANCE = 1000
+MODEL_PATHS = {
+    "Extended DQN 3 (selected)": "models/dqn_primary",
+    "Original DQN 1 (exploratory)": "models/dqn_exploratory",
+}
+OPPONENTS = {
+    "Extended DQN 3 (selected)": (
+        "The formally selected reinforcement learning model. Trained for 500 episodes "
+        "(250,000 betting opportunities) and chosen from six candidates using 30 "
+        "selection sessions. It uses six public features to estimate which wager "
+        "offers the highest learned value. Final experiment mean session log growth: -0.01971."
+    ),
+    "Original DQN 1 (exploratory)": (
+        "An earlier version trained for 100 episodes (50,000 betting opportunities). "
+        "It uses the same six inputs and 6-64-64-6 network architecture as Extended DQN 3, "
+        "but has different trained weights and received less training. "
+        "Included as an exploratory comparison, not the selected research model. "
+        "Final experiment mean session log growth: -0.01419."
+    ),
+    "Flat betting": (
+        "Always bets 1 unit when permitted, without considering card counts, "
+        "bankroll growth or previous results. A simple baseline."
+    ),
+    "Hi Lo card counting": (
+        "Uses the public cards already revealed to estimate the true count. "
+        "It bets 1, 2, 4, 6 or 8 units as the count increases, subject to the same limits."
+    ),
+    "Calibrated half Kelly": (
+        "Uses returns estimated from separate blackjack simulations to size bets "
+        "according to estimated advantage and variance. Bets only when the "
+        "calibration supports a positive edge."
+    ),
+    "Model based log betting": (
+        "Uses the saved calibrated return distribution to choose the legal wager "
+        "with the highest estimated log bankroll growth. "
+        "This was the main benchmark for the selected DQN."
+    ),
+    "Never bet (control)": (
+        "Always sits out, keeping its starting bankroll. "
+        "A zero risk control rather than a strategy intended to win."
+    ),
+}
+SUITS = {"Spades": "♠", "Hearts": "♥", "Diamonds": "♦", "Clubs": "♣"}
+RANKS = {"Ace": "A", "King": "K", "Queen": "Q", "Jack": "J"}
+
+plt.rcParams.update({
+    "figure.facecolor": "lightsteelblue",
+    "axes.facecolor": "lemonchiffon",
+})
+
+st.set_page_config(page_title="BlackJackAI", page_icon="♠️", layout="wide")
 
 st.markdown("""
 <style>
-.stApp {
-    background: radial-gradient(ellipse at 55% -10%, #204b45 0%, #0a2525 48%, #08171b 100%);
-    color: #f3f3e9;
+.block-container {max-width: 1200px; padding-top: 2rem;}
+.blackjack-table {
+    background: radial-gradient(ellipse at center, #236651, #103b33);
+    border: 8px solid #493626;
+    border-radius: 40px;
+    padding: 24px;
+    margin: 15px 0;
+    color: white;
 }
-.block-container { max-width: 1450px; padding-top: 2rem; }
-h1, h2, h3 { letter-spacing: -.025em; }
-[data-testid="stMetric"] {
-    background: #132d30;
-    border: 1px solid #355352;
-    border-radius: 14px;
-    padding: .7rem 1rem;
-}
-.table-surface {
-    background: linear-gradient(145deg, #1b554a, #114238);
-    border: 3px solid #af8c52;
-    box-shadow: 0 12px 30px #05181975;
-    border-radius: 32px;
-    padding: 1.4rem 1.5rem 1.5rem;
-    margin: .55rem 0 1.4rem;
-}
-.seat-label {
-    color: #e8d9b7;
-    letter-spacing: .12em;
-    font-size: .79rem;
-    font-weight: 800;
-    text-transform: uppercase;
-    margin-bottom: .5rem;
-}
-.card {
+.seat {color: #f1e3b7; font-weight: bold; margin: 12px 0 6px;}
+.playing-card {
     display: inline-flex;
-    width: 48px;
-    height: 72px;
-    border-radius: 7px;
-    margin: 0 4px 6px 0;
-    background: #fffdf6;
-    color: #182934;
     align-items: center;
     justify-content: center;
-    flex-direction: column;
-    box-shadow: 2px 3px 2px #041b1b88;
-    border: 1px solid #e7dfc7;
-    font-size: 1.15rem;
-    font-weight: 900;
-    line-height: 1.2;
+    width: 54px;
+    height: 78px;
+    margin: 4px;
+    background: white;
+    color: #20252c;
+    border-radius: 7px;
+    font-size: 23px;
+    font-weight: bold;
+    box-shadow: 0 3px 7px #0005;
 }
-.card.red { color: #be2e4b; }
-.card.hidden {
-    background: repeating-linear-gradient(45deg, #4d58a4, #4d58a4 5px, #353d78 5px, #353d78 10px);
-    color: #fff;
-    border: 2px solid #e7dcab;
-}
-.hand-meta { margin: .2rem 0 .8rem; color: #f5eee0; font-size: .83rem; }
-.table-note { color: #d5e9d8; font-size: .87rem; margin-top: .3rem; }
-.hero-note { color: #aec5c2; margin-bottom: 1.2rem; }
-.stButton > button[kind="primary"] { border: 1px solid #e0bc70; }
+.playing-card.red {color: #c22836;}
+.playing-card.hidden {background: #594396; color: white;}
 </style>
 """, unsafe_allow_html=True)
 
 
-SUITS = {
-    "Spades": "♠", "Hearts": "♥", "Diamonds": "♦", "Clubs": "♣",
-}
-RANKS = {"Jack": "J", "Queen": "Q", "King": "K", "Ace": "A"}
+def create_opponent(name):
+    """Use the same saved agents and betting policies as the experiment."""
+    if name in MODEL_PATHS:
+        return load_policy(ROOT / MODEL_PATHS[name])
+    if name == "Flat betting":
+        return DiscreteBetting(FlatBetting(stake=1))
+    if name == "Hi Lo card counting":
+        return DiscreteBetting(HiLoBetting(base_unit=1))
+    if name == "Calibrated half Kelly":
+        return DiscreteBetting(CalibratedKellyBetting.from_file(ROOT / "models/calibration_model.json"))
+    if name == "Model based log betting":
+        return DiscreteBetting(ModelBasedLogBetting.from_file(ROOT / "models/calibration_model.json"))
+    if name == "Never bet (control)":
+        return DiscreteBetting()
+    raise ValueError("Unknown betting strategy")
 
 
-def cards_html(cards, hidden=False):
-    if not cards and not hidden:
-        return '<span class="table-note">No cards dealt</span>'
-    blocks = []
+def new_session(model_name, seed):
+    """Use the original simulator, with one hidden reference player."""
+    engine = BlackjackEngine(
+        players={
+            "reference": Player(Decimal("1000000000")),
+            "you": Player(Decimal(START_BALANCE)),
+            "dqn": Player(Decimal(START_BALANCE)),
+        },
+        rules=Rules(),
+        seed=seed,
+        retain_history=False,
+    )
+    return {
+        "engine": engine,
+        "model": create_opponent(model_name),
+        "basic": BasicStrategy(),
+        "results": [],
+        "wagers": {"you": 0, "dqn": 0},
+        "model_name": model_name,
+        "seed": seed,
+        "phase": "betting",
+    }
+
+
+def legal_bets(game):
+    if game["engine"].state not in ("betting", "complete", "void"):
+        return []
+    mask = legal_wager_mask(game["engine"].betting_observation("you"))
+    return [0 if WAGERS[i] is None else int(WAGERS[i])
+            for i, allowed in enumerate(mask) if allowed]
+
+
+def save_result(game):
+    """Save each completed round once so the graph updates correctly."""
+    engine = game["engine"]
+    if engine.state not in ("complete", "void") or len(game["results"]) >= engine.round_number:
+        return
+
+    players = engine.history.last_round["players"]
+    result = {"Round": engine.round_number}
+    for seat, label in (("you", "You"), ("dqn", "Opponent")):
+        row = players[seat]
+        result[f"{label} bankroll"] = float(row["bankroll_end"])
+        result[f"{label} profit"] = float(row["net_profit"])
+        result[f"{label} bet"] = float(row["initial_wager"])
+    game["results"].append(result)
+    game["phase"] = "result"
+
+
+def advance_ai(game):
+    """Play the automated seats until it is your turn or the round ends."""
+    engine = game["engine"]
+    while engine.state == "player_turn" and engine.current_player != "you":
+        action = game["basic"].choose_action(engine.observation(engine.current_player))
+        try:
+            engine.act(engine.current_player, action)
+        except ShoeExhausted:
+            if engine.state != "void":
+                raise
+            break
+    save_result(game)
+
+
+def deal_round(game, wager):
+    engine = game["engine"]
+    if wager not in legal_bets(game):
+        raise ValueError("Invalid wager")
+
+    model_bet = game["model"].choose_wager(engine.betting_observation("dqn"))
+    wagers = {"reference": Decimal(1)}
+    if wager:
+        wagers["you"] = Decimal(wager)
+    if model_bet is not None:
+        wagers["dqn"] = model_bet
+
+    game["wagers"] = {"you": wager, "dqn": int(model_bet or 0)}
+    game["phase"] = "playing"
+    try:
+        engine.start_round(wagers)
+    except ShoeExhausted:
+        if engine.state != "void":
+            raise
+    advance_ai(game)
+
+
+def take_action(game, action):
+    engine = game["engine"]
+    if engine.current_player != "you" or action not in engine.legal_actions("you"):
+        raise ValueError("Not a legal action")
+    try:
+        engine.act("you", action)
+    except ShoeExhausted:
+        if engine.state != "void":
+            raise
+    advance_ai(game)
+
+
+def card_html(cards, hidden=False):
+    output = ""
     for card in cards:
-        suit = SUITS.get(card["suit"], "♠")
-        rank = RANKS.get(card["value"], card["value"])
+        suit = SUITS[card["suit"]]
+        rank = RANKS.get(card["value"], str(card["value"]))
         color = " red" if suit in ("♥", "♦") else ""
-        blocks.append(f'<span class="card{color}">{rank}<br>{suit}</span>')
+        output += f'<span class="playing-card{color}">{escape(rank)}{suit}</span>'
     if hidden:
-        blocks.append('<span class="card hidden">✦</span>')
-    return "".join(blocks)
+        output += '<span class="playing-card hidden">♠</span>'
+    return output or "No cards"
 
 
-def hands_html(hands):
+def hand_html(hands):
     if not hands:
-        return '<div class="table-note">Sitting out this round</div>'
-    result = []
-    for number, hand in enumerate(hands, 1):
-        title = f"Hand {number}" if len(hands) > 1 else "Hand"
-        status = hand["outcome"] or ("Finished" if hand["finished"] else "Playing")
-        if hand["awaiting_card"]:
-            status = "Waiting for split card"
-        result.append(
-            f'<div class="hand-meta">{title} · {hand["total"]} points · '
-            f'{status} · Wager {hand["wager"] or "pending"}</div>'
-            f'<div>{cards_html(hand["cards"])}</div>'
-        )
-    return "".join(result)
-
-
-def plot_series(match, kind):
-    fig, ax = plt.subplots(figsize=(9, 3.5))
-    fig.patch.set_facecolor("lightsteelblue")
-    ax.set_facecolor("lemonchiffon")
-
-    for seat, label, color in (("you", "You", "#165e82"), ("model", "DQN", "#9d426c")):
-        if kind == "bankroll":
-            data = match.bankroll[seat]
-        elif kind == "profit":
-            data = [amount - 1000 for amount in match.bankroll[seat]]
+        return "Sitting out"
+    output = ""
+    for i, hand in enumerate(hands, 1):
+        label = f"Hand {i}" if len(hands) > 1 else "Hand"
+        status = hand["outcome"]
+        if status is not None:
+            amount = float(hand["net_profit"])
+            description = f" · {status.capitalize()} ({amount:+g} units)"
         else:
-            data = match.drawdown[seat]
-        ax.plot(match.rounds, data, label=label, color=color, linewidth=2, marker="o", markersize=3)
+            description = ""
+        output += f'<div>{label}, {hand["total"]} points{description}</div>'
+        output += card_html(hand["cards"])
+    return output
 
-    if kind == "bankroll":
-        ax.set_title("Bankroll over time")
-        ax.set_ylabel("Bankroll (units)")
-        ax.axhline(1000, color="gray", linestyle="--", linewidth=1, alpha=0.7)
-    elif kind == "profit":
-        ax.set_title("Cumulative profit and loss")
-        ax.set_ylabel("Profit / loss (units)")
-        ax.axhline(0, color="gray", linestyle="--", linewidth=1, alpha=0.7)
+
+def render_table(game):
+    engine = game["engine"]
+    waiting_for_bet = game["phase"] == "betting"
+
+    if waiting_for_bet:
+        # do not show the completed hand as if it belongs to the next round
+        dealer_cards = '<span style="color:#d5e6df">Cards appear after the deal</span>'
+        you_cards = "No cards yet"
+        dqn_cards = "No cards yet"
+        dealer_points = ""
+        you_bet = 0
+        dqn_bet = 0
     else:
-        ax.set_title("Drawdown from each player's bankroll peak")
-        ax.set_ylabel("Drawdown (%)")
-        ax.set_ylim(bottom=0)
+        observation = engine.observation("you")
+        dealer = observation["dealer"]
+        people = observation["players"]
+        dealer_cards = card_html(dealer["cards"], dealer["hole_hidden"])
+        you_cards = hand_html(people["you"]["hands"])
+        dqn_cards = hand_html(people["dqn"]["hands"])
+        dealer_points = "" if dealer["total"] is None else f' ({dealer["total"]})'
+        you_bet = game["wagers"]["you"]
+        dqn_bet = game["wagers"]["dqn"]
+
+    st.markdown(f"""
+    <div class="blackjack-table">
+        <div class="seat">Dealer{dealer_points}</div>
+        <div>{dealer_cards}</div>
+        <hr style="border-color:#ffffff50">
+        <div style="display:flex; gap:5%">
+            <div style="flex:1">
+                <div class="seat">You, bet {you_bet}</div>
+                {you_cards}
+            </div>
+            <div style="flex:1">
+                <div class="seat">Opponent, bet {dqn_bet}</div>
+                {dqn_cards}
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def plot_results(results, choice):
+    rounds = [0] + [row["Round"] for row in results]
+    fig, ax = plt.subplots(figsize=(10, 4))
+
+    for label, color in (("You", "#425e87"), ("Opponent", "#a34c6c")):
+        bankroll = [START_BALANCE] + [row[f"{label} bankroll"] for row in results]
+        if choice == "Bankroll":
+            values = bankroll
+        elif choice == "Profit and loss":
+            values = [balance - START_BALANCE for balance in bankroll]
+        else:
+            peak = START_BALANCE
+            values = []
+            for balance in bankroll:
+                peak = max(peak, balance)
+                values.append(100 * (peak - balance) / peak)
+
+        ax.plot(rounds, values, label=label, color=color, linewidth=2)
 
     ax.set_xlabel("Completed rounds")
-    ax.legend(loc="best", framealpha=0.95)
-    ax.grid(alpha=0.23)
-    ax.tick_params(labelsize=9)
+    ax.set_ylabel("Drawdown (%)" if choice == "Drawdown" else "Units")
+    ax.set_title(choice)
+    ax.grid(alpha=0.3)
+    ax.legend()
     fig.tight_layout()
-    return fig
+    st.pyplot(fig)
+    plt.close(fig)
 
 
-with st.sidebar:
-    st.header("Table settings")
-    model_choice = st.selectbox("Trained model", list(MODEL_PATHS))
-    seed = st.number_input("Shoe seed", min_value=0, max_value=999999999, value=2026, step=1)
-    if st.button("Start a new session", use_container_width=True):
-        st.session_state.match = BlackjackMatch(seed=int(seed), model_name=model_choice)
-        st.rerun()
+def play_page():
+    st.title("♠ Blackjack Strategy Arena")
+    st.caption(
+        "You and the selected opponent face the same dealer. "
+        "The opponent decides how much to bet, while both players use the same "
+        "blackjack rules. The opponent's hands always follow BasicStrategy."
+    )
+
+    with st.sidebar:
+        st.header("Choose your opponent")
+        model_name = st.selectbox("Betting strategy", list(OPPONENTS))
+        st.write(OPPONENTS[model_name])
+        with st.expander("How do the DQNs differ?"):
+            st.markdown(
+                "**Extended DQN 3:** 500 training episodes, 250,000 opportunities. "
+                "Selected from six trained candidates using a separate 30 session evaluation. "
+                "\n\n**Original DQN 1:** 100 episodes, 50,000 opportunities. "
+                "An earlier model included for exploration. "
+                "\n\nBoth have six input features, two hidden layers of 64 neurons "
+                "and six possible wager actions. Neither retrains in the app. "
+                "In the final experiment, the selected DQN underperformed "
+                "the model based log betting strategy."
+            )
+        seed = int(st.number_input("Shuffle seed", min_value=0, value=2026, step=1))
+        restart = st.button("New session", use_container_width=True)
+        st.caption("Six decks, dealer stands on soft 17, blackjack pays 3:2.")
+        st.caption("Both players start with 1,000 units. Wagers are 0, 1, 2, 4, 6 or 8 units, subject to the original betting limits.")
+        st.caption("Only the two DQNs are neural networks. The other options are existing benchmark policies.")
+
+    if restart or "blackjack_session" not in st.session_state:
+        st.session_state.blackjack_session = new_session(model_name, seed)
+
+    game = st.session_state.blackjack_session
+    if model_name != game["model_name"]:
+        st.sidebar.warning("Press New session to apply the newly selected opponent.")
+    engine = game["engine"]
+    results = game["results"]
+
+    first, second, third = st.columns(3)
+    for column, label in ((first, "You"), (second, "Opponent")):
+        balance = START_BALANCE if not results else results[-1][f"{label} bankroll"]
+        column.metric(f"{label} bankroll", f"{balance:,.2f}", f"{balance - START_BALANCE:+.2f}")
+    third.metric("Rounds", len(results))
+    st.caption(f'Current opponent: **{game["model_name"]}**')
+
+    render_table(game)
+
+    if engine.state == "player_turn" and engine.current_player == "you":
+        st.subheader("Your turn")
+        legal = set(engine.legal_actions("you"))
+        actions = st.columns(4)
+        for column, action in zip(actions, ("hit", "stand", "double", "split")):
+            if column.button(action.capitalize(), disabled=action not in legal,
+                             use_container_width=True, key=f"{engine.round_number}_{action}_{engine.current_hand.hand_id}"):
+                take_action(game, action)
+                st.rerun()
+    elif game["phase"] == "result":
+        last = results[-1]
+        st.subheader(f"Round {engine.round_number} complete")
+        if engine.state == "void":
+            st.warning("Round voided. Your wagers have been refunded.")
+        else:
+            st.success(
+                f'You: {last["You profit"]:+g} units  |  '
+                f'Opponent: {last["Opponent profit"]:+g} units'
+            )
+        st.caption("Review the final hands above before starting the next round.")
+        if engine.round_number < 500:
+            if st.button("New game", type="primary", use_container_width=True):
+                game["phase"] = "betting"
+                game["wagers"] = {"you": 0, "dqn": 0}
+                st.rerun()
+        else:
+            st.info("Session complete. Start a new session from the sidebar.")
+    elif engine.round_number < 500:
+        st.subheader("Next round")
+        bets = legal_bets(game)
+        wager = st.select_slider("Your wager", options=bets, value=bets[0],
+                                 format_func=lambda bet: "Sit out" if bet == 0 else f"{bet} units")
+        if st.button("Deal cards", type="primary"):
+            deal_round(game, wager)
+            st.rerun()
+    else:
+        st.success("Session complete. Start a new session from the sidebar.")
+
+    if results:
+        last = results[-1]
+        st.caption(f'Last round: you {last["You profit"]:+g} units, opponent {last["Opponent profit"]:+g} units.')
 
     st.divider()
-    st.markdown("**Table rules**")
-    st.caption("Six decks · dealer stands on soft 17 · blackjack pays 3:2 · doubling and splitting allowed")
-    st.caption("Starting bankroll: 1,000 units each")
-    st.caption("Wager choices: sit out, 1, 2, 4, 6 or 8 units. Positive wagers must respect the 2% bankroll limit.")
-    st.caption("The DQN selects wagers. Its hands use the original BasicStrategy. You control your own hand.")
-    with st.expander("Why is there a reference seat?"):
-        st.write("The original DQN was trained with a background reference player who always plays one unit. This app keeps that hidden automated seat so the shoe continues moving when you or the DQN sit out. It never affects either displayed bankroll.")
+    st.subheader("Session statistics")
+    chart = st.selectbox("Show graph", ("Bankroll", "Profit and loss", "Drawdown"))
+    plot_results(results, chart)
 
-if "match" not in st.session_state:
-    st.session_state.match = BlackjackMatch()
+    for column, label in ((first, "You"), (second, "Opponent")):
+        bets = [r for r in results if r[f"{label} bet"] > 0]
+        wins = sum(r[f"{label} profit"] > 0 for r in bets)
+        column.caption(f"{label}: {len(bets)} rounds played, {wins} profitable rounds")
 
-match = st.session_state.match
+    if results:
+        with st.expander("Round history"):
+            st.dataframe(list(reversed(results[-20:])), hide_index=True, use_container_width=True)
 
-st.title("♠️ Blackjack | You vs DQN")
-st.markdown(
-    '<div class="hero-note">Play alongside your trained blackjack agent against the same dealer. '
-    'Make your own decisions and see how your results compare after every round.</div>',
-    unsafe_allow_html=True,
-)
+    st.caption("Simulation only. Saved DQNs and calibration models are not retrained during play. A hidden one unit reference seat keeps the shoe moving, as in the original training setup.")
 
-col_a, col_b, col_c = st.columns([1, 1, 0.85])
-for panel, seat, heading in ((col_a, "you", "Your bankroll"), (col_b, "model", "DQN bankroll")):
-    data = match.stats(seat)
-    with panel:
-        st.metric(heading, f'{data["bankroll"]:,.2f}', delta=f'{data["profit"]:+,.2f} units')
-with col_c:
-    st.metric("Rounds completed", f"{len(match.round_log)} / {MAX_ROUNDS}")
 
-observation = match.observation()
-dealer = observation["dealer"]
-players = observation["players"]
-running_count, true_count = match.visible_count()
-
-with st.container():
-    dealer_markup = cards_html(dealer["cards"], hidden=dealer["hole_hidden"])
-    dealer_note = f'{dealer["total"]} points' if dealer["total"] is not None else "Hidden card not revealed"
-    you_markup = hands_html(players["you"]["hands"])
-    model_markup = hands_html(players["model"]["hands"])
-    st.markdown(
-        f'<div class="table-surface">'
-        f'<div class="seat-label">Dealer · {dealer_note}</div>'
-        f'<div>{dealer_markup}</div>'
-        f'<hr style="border-color:#ffffff30; margin:1.2rem 0">'
-        f'<div style="display:flex; gap:4%;">'
-        f'<div style="flex:1; min-width:0"><div class="seat-label">You · Wager {match.current_wagers["you"]}</div>{you_markup}</div>'
-        f'<div style="flex:1; min-width:0"><div class="seat-label">DQN · Wager {match.current_wagers["model"]}</div>{model_markup}</div>'
-        f'</div></div>',
-        unsafe_allow_html=True,
-    )
-
-if match.active and match.engine.current_player == "you":
-    st.subheader("Your turn")
-    hint = match.basic_strategy_hint()
-    st.caption(f"BasicStrategy suggests: **{hint.capitalize()}**. You can make your own choice.")
-    available = set(match.engine.legal_actions("you"))
-    options = ("hit", "stand", "double", "split")
-    buttons = st.columns(4)
-    for column, action in zip(buttons, options):
-        with column:
-            if st.button(action.capitalize(), disabled=action not in available,
-                         use_container_width=True, key=f"move_{match.round_number}_{action}_{match.engine.current_hand.hand_id}"):
-                match.human_action(action)
-                st.rerun()
-
-elif match.can_start:
-    st.subheader(f"Place your bet for round {match.round_number + 1}")
-    allowed = match.legal_human_wagers()
-    next_bet = st.select_slider(
-        "Your initial wager", options=allowed, value=allowed[0],
-        format_func=lambda wager: "Sit out" if wager == 0 else f"{wager} units",
-        key=f"stake_{match.round_number + 1}",
-    )
-    if st.button("Deal next round", type="primary", use_container_width=True):
-        match.start_round(next_bet)
-        st.rerun()
-
-else:
-    st.success("Session complete. Start a new session from the sidebar to play again.")
-
-if match.round_log:
-    latest = match.round_log[-1]
-    st.caption(
-        f'Last round: you {latest["you_profit"]:+g} units ({latest["you_outcome"]}), '
-        f'DQN {latest["model_profit"]:+g} units ({latest["model_outcome"]}).'
-    )
-
-st.caption(f"Running count: **{running_count:+d}** | True count: **{true_count:+.2f}** | Model: **{match.model_name}**")
-
-st.divider()
-st.header("Live statistics")
-row1a, row1b = st.columns(2)
-with row1a:
-    fig = plot_series(match, "bankroll")
-    st.pyplot(fig, use_container_width=True)
-    plt.close(fig)
-with row1b:
-    fig = plot_series(match, "profit")
-    st.pyplot(fig, use_container_width=True)
-    plt.close(fig)
-
-row2a, row2b = st.columns([1.2, 0.8])
-with row2a:
-    fig = plot_series(match, "drawdown")
-    st.pyplot(fig, use_container_width=True)
-    plt.close(fig)
-with row2b:
-    st.subheader("Session comparison")
-    for seat, label in (("you", "You"), ("model", "DQN")):
-        stats = match.stats(seat)
-        st.markdown(f"**{label}**")
-        s1, s2 = st.columns(2)
-        s1.metric("Rounds bet", stats["bets"])
-        s2.metric("Rounds won", f'{stats["win_rate"]:.1f}%')
-        st.caption(f'Max drawdown: {stats["peak_drawdown"]:.2f}%')
-
-with st.expander("Round history", expanded=False):
-    if match.round_log:
-        st.dataframe(list(reversed(match.round_log[-20:])), use_container_width=True, hide_index=True)
-    else:
-        st.write("Your completed rounds will appear here.")
-
-with st.expander("Recent playing decisions", expanded=False):
-    moves = [move for move in match.action_log if move["seat"] != "reference"][-20:]
-    if moves:
-        st.dataframe(list(reversed(moves)), use_container_width=True, hide_index=True)
-    else:
-        st.write("Hands have not been played yet.")
-
-st.caption("Simulation only. Bankroll values are game units, not real money. The DQN is the original frozen model and does not learn from this session.")
+if __name__ == "__main__":
+    play_page()
