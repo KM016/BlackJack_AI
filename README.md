@@ -1,24 +1,30 @@
-# BlackJackAI
+# Blackjack Bankroll Reinforcement Learning and Risk Analysis
 
-## 1. Introduction
+A Python blackjack simulator comparing classical betting strategies with deep reinforcement learning, focusing on bankroll management and risk.
+
+> Personal Project<br>
+> Date: 10/2026 <br>
+> [**Live Streamlit app**]()
+
+## Project overview
 
 Can a neural network learn how much to bet in blackjack better than a set of traditional betting strategies?
 
-BlackJackAI explores this question using a blackjack simulator, several betting strategies and a Deep Q Network (DQN). I wanted to see whether reinforcement learning could make sensible decisions about risk, rather than just learn to place bigger bets.
+This project aimed to explore that question using a blackjack simulator, several betting strategies and a Deep Q Network (DQN). We see whether reinforcement learning could make sensible decisions about risk, rather than just learn to place bigger bets.
 
-The important distinction is that **the AI does not decide whether to hit, stand, double or split**. Every player uses the same fixed BasicStrategy to play their hands. The strategies I'm comparing only decide **how much to wager before a round starts**, including whether to sit out.
+The important distinction is that **the AI does not decide whether to hit, stand, double or split**. Every player uses the same fixed `BasicStrategy` to play their hands. The strategies we compare only decide **how much to wager before a round starts**, including whether to sit out.
 
 The completed experiment compares seven policies across 2,100 simulated sessions. The full statistical analysis, graphs and interpretation are in [the analysis notebook](notebooks/Analysis.ipynb).
 
-## 2. The blackjack engine
+## Blackjack engine
 
-The engine uses six decks, reshuffles at 75% penetration and has a dealer who stands on soft 17. A natural blackjack pays 3:2, doubling after splitting is allowed, and a player can have up to four hands after splits. There is no insurance or surrender.
+The simulator uses six decks, reshuffles at 75% penetration and has a dealer who stands on soft 17. A natural blackjack pays 3:2, doubling after splitting is allowed, and a player can have up to four hands after splits. There is no insurance or surrender.
 
 [BasicStrategy](strategies/basic.py) uses the player's cards and the dealer's visible card to choose how to play each hand. A separate reference player continues playing even when the strategy being tested sits out, so cards keep moving through the shoe.
 
 The simulator tracks the bankroll, wagers, wins and losses, including the additional stakes needed for doubles and splits. Betting strategies can only use information that would be visible before the next round. They cannot see hidden cards or the future order of the deck.
 
-## 3. Betting strategies
+## Betting strategies
 
 Each strategy chooses from the same set of initial wagers:
 
@@ -79,7 +85,7 @@ The same bankroll restrictions still apply. Hi Lo does not use a fitted predicti
 
 Kelly betting is about choosing how much of your bankroll to risk when you think you have an advantage.
 
-I first used separate blackjack simulations to estimate the average return and variance for different true count ranges. The strategy then uses a half Kelly approximation:
+We first use a separate set of blackjack simulations to estimate the average return and variance for different true count ranges. The strategy then uses a half Kelly approximation:
 
 $$
  f=\frac{1}{2}\max\left(0,\frac{\widehat{\mu}}{\widehat{\sigma}^{2}}\right)
@@ -111,7 +117,7 @@ Here, $B$ is the current bankroll, $r$ is a possible return per unit wagered, an
 
 It chooses the legal wager with the highest estimated log growth. Sitting out is always an option, with log growth of zero. It also requires sufficient calibration evidence for a positive advantage before considering a bet.
 
-This is the main benchmark I wanted the DQN to beat.
+This is the main benchmark we want the DQN to beat.
 
 [Implementation](strategies/model_based_log.py)
 
@@ -165,27 +171,27 @@ The bankroll stays at 1,000 units throughout the session. This strategy is a con
 
 </details>
 
-## 4. Training and evaluation
+## Training and evaluation
 
 The experiment had three main stages.
 
-**First, I calibrated the statistical strategies.** I ran separate simulations to estimate blackjack returns in different true count ranges. This used 120 calibration sessions, each containing 5,000 rounds. Another 40 sessions were reserved for validation. The calibration model was then frozen before the final comparison.
+**First, we calibrate the statistical strategies.** We run separate simulations to estimate blackjack returns in different true count ranges. This used 120 calibration sessions, each containing 5,000 rounds. Another 40 sessions were reserved for validation. The calibration model was then frozen before the final comparison.
 
-**Next, I trained the DQN.** The network learned through trial and error using experience replay and a target network. Its reward for each opportunity was the change in log bankroll:
+**Next, we train the DQN.** The network learned through trial and error using experience replay and a target network. Its reward for each opportunity was the change in log bankroll:
 
 $$
  r_t=\log\left(\frac{B_{t+1}}{B_t}\right)
 $$
 
-Three original training runs used 100 episodes each, while three extended runs used 500 episodes each. Each episode contained 500 betting opportunities. I compared the six candidates on 30 separate selection sessions and selected Extended DQN 3 using mean session log growth, with drawdown as a tie breaker.
+Three original training runs used 100 episodes each, while three extended runs used 500 episodes each. Each episode contained 500 betting opportunities. We compared the six candidates on 30 separate selection sessions and selected Extended DQN 3 using mean session log growth, with drawdown as a tie breaker.
 
-**Finally, I evaluated the frozen strategies.** Each of the seven policies completed 300 sessions with 500 betting opportunities per session, starting with 1,000 simulated units. That gave me **2,100 strategy sessions and 1,050,000 betting opportunities** to analyse.
+**Finally, we evaluate the frozen strategies.** Each of the seven policies completed 300 sessions with 500 betting opportunities per session, starting with 1,000 simulated units. That gave me **2,100 strategy sessions and 1,050,000 betting opportunities** to analyse.
 
 The strategies used matched random seeds for the final comparison, although different betting decisions could cause them to encounter different cards. The final evaluation data were not used to choose or retrain the selected DQN.
 
-I kept the session results in [`results/sessions.csv`](results/sessions.csv), with a smaller overview in [`results/summary.csv`](results/summary.csv). The notebook works directly from these saved results, so there is no need to retrain the models or replay the full experiment to inspect the analysis.
+The session results are kept in [`results/sessions.csv`](results/sessions.csv), with a smaller overview in [`results/summary.csv`](results/summary.csv). The notebook works directly from these saved results, so there is no need to retrain the models or replay the full experiment to inspect the analysis.
 
-## 5. Results and analysis
+## Results and analysis
 
 The main question was whether the selected DQN could achieve better session log growth than the model based strategy.
 
@@ -205,13 +211,13 @@ The table below shows the mean final bankroll and mean log growth from the 300 s
 
 The betting behaviour was also interesting. The selected DQN placed a wager on about **99.93%** of opportunities, compared with about **3.45%** for the calibrated strategies. Its mean maximum drawdown was around **16.0%**, against **3.6%** for model based log betting.
 
-Hi Lo produced the highest average log growth in this particular simulation, but that does not mean it will always perform best. These results reflect the game rules, models and sample that I tested, not guaranteed real world profits.
+Hi Lo produced the highest average log growth in this particular simulation, but that does not mean it will always perform best. These results reflect the game rules, models and sample that was tested, not guaranteed real world profits.
 
 The result was not what I hoped for, but it was useful. It showed me why a learned strategy still needs to be compared against simple, sensible benchmarks. A more complicated model is not necessarily a better one.
 
 **[Read the full statistical analysis in the notebook](notebooks/Analysis.ipynb)** for the graphs, risk comparisons, confidence intervals and interpretation.
 
-## Running the project
+## Setup and verification
 
 The project was developed and verified with Python 3.14 on macOS. From the repository root:
 
@@ -230,7 +236,24 @@ python -m pytest tests -q
 
 Open [`notebooks/Analysis.ipynb`](notebooks/Analysis.ipynb) in VS Code or your preferred Jupyter environment to view or run the analysis. The notebook already contains its executed graphs and results, so it can also be read directly on GitHub.
 
+## Repository contents
+
 The source is organised into [`blackjack/`](blackjack/) for the game engine, [`strategies/`](strategies/) for betting rules, [`rl/`](rl/) for reinforcement learning, and [`research/`](research/) for calibration, evaluation and statistical calculations.
+
+```text
+.
+├── blackjack/            # Blackjack engine and rules
+├── strategies/           # Playing strategy and betting policies
+├── rl/                   # DQN environment, training and inference
+├── research/             # Calibration, evaluation and statistics
+├── models/               # Frozen DQN and calibration models
+├── results/              # Final evaluation data
+├── notebooks/
+│   └── Analysis.ipynb    # Statistical analysis and figures
+├── tests/                # Automated tests
+├── requirements.txt      # Python dependencies
+└── README.md
+```
 
 ## Acknowledgements
 
