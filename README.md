@@ -4,7 +4,7 @@ A Python blackjack simulator comparing classical betting strategies with deep re
 
 > Personal Project<br>
 > Date: 10/2026 <br>
-> [**Live Streamlit app**]()
+> [**Live Streamlit app**](https://blackjackai.streamlit.app/)
 
 ## Project overview
 
